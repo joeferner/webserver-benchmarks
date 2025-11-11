@@ -14,7 +14,7 @@ use thiserror::Error;
 use tokio::time::Instant;
 
 use crate::{
-    docker::run_webserver,
+    docker::{run_webserver, stop_webserver},
     http::{HttpError, http_wait_for_url},
     process_manager::{ProcessManager, ProcessManagerError},
 };
@@ -93,7 +93,7 @@ async fn run_benchmarks() -> Result<(), BenchmarkError> {
 
     let mut all_results: HashMap<String, BenchmarkJsonResult> = HashMap::new();
 
-    for name in ["fastapi"] {
+    for name in ["fastapi", "nodejs-express"] {
         let results = run_benchmark(&pm, name).await;
         match results {
             Ok(results) => {
@@ -132,6 +132,7 @@ async fn run_benchmark(
 
     let plaintext = benchmark_plaintext(10000).await?;
 
+    stop_webserver(name)?;
     pm.kill(child)?;
     Ok(BenchmarkResults { plaintext })
 }
