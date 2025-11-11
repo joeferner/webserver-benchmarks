@@ -8,7 +8,7 @@ pub fn run_webserver(name: &str) -> Result<Child, Error> {
     let args = ["compose", "up", "--build", "--remove-orphans"];
 
     info!("spawning webserver: {name}");
-    cmd.args(&args)
+    cmd.args(args)
         .current_dir(format!("/webservers/{name}"))
         .spawn()
 }

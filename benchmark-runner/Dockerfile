@@ -10,6 +10,12 @@ RUN \
     && apt-get update \
     && apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 
+RUN rustup component add clippy rustfmt
+
 WORKDIR /app
+COPY Cargo.lock Cargo.toml .
+RUN mkdir src && echo "fn main() {}" > src/main.rs && cargo build && rm -rf src
+
+COPY src src
 
 CMD ["cargo", "run"]

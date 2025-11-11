@@ -16,8 +16,10 @@ pub enum ProcessManagerError {
     ChildNotFound(u32),
 }
 
+type Processes = Arc<Mutex<Vec<Option<Arc<Mutex<Child>>>>>>;
+
 pub struct ProcessManager {
-    processes: Arc<Mutex<Vec<Option<Arc<Mutex<Child>>>>>>,
+    processes: Processes,
 }
 
 impl ProcessManager {
@@ -96,9 +98,7 @@ impl Drop for ProcessManager {
     }
 }
 
-fn kill_processes(
-    processes: Arc<Mutex<Vec<Option<Arc<Mutex<Child>>>>>>,
-) -> Result<(), ProcessManagerError> {
+fn kill_processes(processes: Processes) -> Result<(), ProcessManagerError> {
     let mut processes = processes.lock().map_err(|err| {
         error!("failed to lock process: {err}");
         ProcessManagerError::Lock

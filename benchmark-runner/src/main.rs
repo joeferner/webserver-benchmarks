@@ -1,4 +1,6 @@
 use std::{
+    collections::HashMap,
+    fs::File,
     sync::{Arc, Mutex},
     time::Duration,
 };
@@ -7,6 +9,7 @@ use env_logger::{self, Env};
 use futures::future::join_all;
 use log::info;
 use reqwest::{Client, Response, StatusCode};
+use serde::{Serialize, Serializer};
 use thiserror::Error;
 use tokio::time::Instant;
 
@@ -41,30 +44,74 @@ enum BenchmarkError {
 
     #[error("HTTP Reqwest: {0}")]
     HttpReqwest(#[from] reqwest::Error),
+
+    #[error("JSON Serde: {0}")]
+    Json(#[from] serde_json::Error),
 }
 
-#[derive(Debug)]
+#[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
 enum BenchmarkResult {
-    Ok(Duration),
-    InvalidStatusCode(StatusCode),
+    Ok(BenchmarkOkResult),
+    InvalidStatusCode(u16),
     InvalidResponse(String),
 }
 
-#[derive(Debug)]
+#[derive(Serialize, Debug)]
+struct BenchmarkOkResult {
+    #[serde(rename = "time_ms", serialize_with = "duration_as_millis")]
+    time: Duration,
+    iterations: usize,
+}
+
+#[derive(Serialize, Debug)]
 struct BenchmarkResults {
     plaintext: BenchmarkResult,
+}
+
+#[derive(Serialize, Debug)]
+#[serde(untagged)]
+enum BenchmarkJsonResult {
+    Success(BenchmarkResults),
+    Error(BenchmarkJsonError),
+}
+
+#[derive(Serialize, Debug)]
+struct BenchmarkJsonError {
+    error: String,
+}
+
+fn duration_as_millis<S>(d: &Duration, s: S) -> Result<S::Ok, S::Error>
+where
+    S: Serializer,
+{
+    s.serialize_u128(d.as_millis())
 }
 
 async fn run_benchmarks() -> Result<(), BenchmarkError> {
     let pm = ProcessManager::new()?;
 
-    let fastapi = run_benchmark(&pm, "fastapi").await?;
-    println!();
-    println!();
-    println!("Results");
-    println!("  fastapi: {fastapi:?}");
-    println!();
-    println!();
+    let mut all_results: HashMap<String, BenchmarkJsonResult> = HashMap::new();
+
+    for name in ["fastapi"] {
+        let results = run_benchmark(&pm, name).await;
+        match results {
+            Ok(results) => {
+                all_results.insert(name.to_string(), BenchmarkJsonResult::Success(results));
+            }
+            Err(err) => {
+                all_results.insert(
+                    name.to_string(),
+                    BenchmarkJsonResult::Error(BenchmarkJsonError {
+                        error: format!("{err}"),
+                    }),
+                );
+            }
+        }
+    }
+
+    let file = File::create("results.json")?;
+    serde_json::to_writer_pretty(file, &all_results)?;
 
     Ok(())
 }
@@ -103,7 +150,9 @@ async fn benchmark_plaintext(iterations: usize) -> Result<BenchmarkResult, Bench
         response: Response,
     ) -> Result<BenchmarkResult, BenchmarkError> {
         if response.status() != StatusCode::OK {
-            return Ok(BenchmarkResult::InvalidStatusCode(response.status()));
+            return Ok(BenchmarkResult::InvalidStatusCode(
+                response.status().as_u16(),
+            ));
         }
         let text = response.text().await?;
         if text != "Hello, World!" {
@@ -112,7 +161,10 @@ async fn benchmark_plaintext(iterations: usize) -> Result<BenchmarkResult, Bench
             )));
         }
 
-        Ok(BenchmarkResult::Ok(start.elapsed()))
+        Ok(BenchmarkResult::Ok(BenchmarkOkResult {
+            time: start.elapsed(),
+            iterations: 1,
+        }))
     }
 
     run_requests(iterations, make_request, check_response).await
@@ -155,13 +207,6 @@ where
     let results = join_all(futures).await;
     let time = start.elapsed();
 
-    validate_results(time, results)
-}
-
-fn validate_results(
-    time: Duration,
-    results: Vec<Result<Result<BenchmarkResult, BenchmarkError>, tokio::task::JoinError>>,
-) -> Result<BenchmarkResult, BenchmarkError> {
     for result in results {
         match result {
             Ok(result) => match result {
@@ -182,5 +227,5 @@ fn validate_results(
             }
         }
     }
-    Ok(BenchmarkResult::Ok(time))
+    Ok(BenchmarkResult::Ok(BenchmarkOkResult { time, iterations }))
 }
