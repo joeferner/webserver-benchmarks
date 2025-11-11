@@ -130,7 +130,7 @@ async fn run_benchmark(
     )
     .await?;
 
-    let plaintext = benchmark_plaintext(1000).await?;
+    let plaintext = benchmark_plaintext(10000).await?;
 
     pm.kill(child)?;
     Ok(BenchmarkResults { plaintext })

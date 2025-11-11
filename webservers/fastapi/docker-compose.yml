@@ -5,6 +5,10 @@ services:
       - "8000:8000"
     networks:
       - benchmark-runner_benchmark
+    ulimits:
+      nofile:
+        soft: 50000
+        hard: 50000
 
 networks:
   benchmark-runner_benchmark:
