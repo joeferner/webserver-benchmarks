@@ -103,7 +103,7 @@ async fn run_benchmarks() -> Result<(), BenchmarkError> {
 
     let mut all_results: HashMap<String, BenchmarkJsonResult> = HashMap::new();
 
-    for name in ["fastapi", "nodejs-express"] {
+    for name in ["python-fastapi", "nodejs-express"] {
         let results = run_benchmark(&pm, name).await;
         match results {
             Ok(results) => {
