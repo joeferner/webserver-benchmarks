@@ -1,10 +1,5 @@
 from fastapi import FastAPI
 from fastapi.responses import PlainTextResponse, FileResponse
-import os
-import sys
-
-print(os.listdir("/"), file=sys.stderr)
-print(os.listdir("/assets/"), file=sys.stderr)
 
 app = FastAPI()
 

@@ -1,0 +1,17 @@
+services:
+  web:
+    build: .
+    ports:
+      - "8000:8000"
+    volumes:
+      - ${ASSETS_PATH}:/assets
+    networks:
+      - benchmark-runner_benchmark
+    ulimits:
+      nofile:
+        soft: 50000
+        hard: 50000
+
+networks:
+  benchmark-runner_benchmark:
+    external: true
