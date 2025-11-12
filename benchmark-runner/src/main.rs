@@ -5,20 +5,23 @@ use std::{
     time::Duration,
 };
 
+use async_trait::async_trait;
 use env_logger::{self, Env};
 use futures::future::join_all;
 use log::info;
-use reqwest::{Client, Response, StatusCode};
+use reqwest::{Client, Response};
 use serde::{Serialize, Serializer};
 use thiserror::Error;
 use tokio::time::Instant;
 
 use crate::{
-    docker::{run_webserver, stop_webserver},
+    benchmarks::{download_binary::benchmark_download_binary, plaintext::benchmark_plaintext},
+    docker::{DockerError, run_webserver, stop_webserver},
     http::{HttpError, http_wait_for_url},
     process_manager::{ProcessManager, ProcessManagerError},
 };
 
+mod benchmarks;
 mod docker;
 mod http;
 mod process_manager;
@@ -39,6 +42,9 @@ enum BenchmarkError {
     #[error("IO: {0}")]
     Io(#[from] std::io::Error),
 
+    #[error("Docker: {0}")]
+    Docker(#[from] DockerError),
+
     #[error("HTTP: {0}")]
     Http(#[from] HttpError),
 
@@ -58,6 +64,7 @@ enum BenchmarkResult {
 }
 
 #[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
 struct BenchmarkOkResult {
     #[serde(rename = "time_ms", serialize_with = "duration_as_millis")]
     time: Duration,
@@ -65,18 +72,21 @@ struct BenchmarkOkResult {
 }
 
 #[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
 struct BenchmarkResults {
     plaintext: BenchmarkResult,
+    download_binary: BenchmarkResult,
 }
 
 #[derive(Serialize, Debug)]
-#[serde(untagged)]
+#[serde(rename_all = "camelCase", untagged)]
 enum BenchmarkJsonResult {
     Success(BenchmarkResults),
     Error(BenchmarkJsonError),
 }
 
 #[derive(Serialize, Debug)]
+#[serde(rename_all = "camelCase")]
 struct BenchmarkJsonError {
     error: String,
 }
@@ -131,61 +141,38 @@ async fn run_benchmark(
     .await?;
 
     let plaintext = benchmark_plaintext(10000).await?;
+    let download_binary = benchmark_download_binary(1000).await?;
 
     stop_webserver(name)?;
     pm.kill(child)?;
-    Ok(BenchmarkResults { plaintext })
+    Ok(BenchmarkResults {
+        plaintext,
+        download_binary,
+    })
 }
 
-async fn benchmark_plaintext(iterations: usize) -> Result<BenchmarkResult, BenchmarkError> {
-    async fn make_request(client: Client) -> Result<Response, BenchmarkError> {
-        let response = client
-            .get("http://web:8000/benchmark/plain-text")
-            .send()
-            .await?;
-        Ok(response)
-    }
-
+#[async_trait]
+trait Benchmark: Send + Sync {
+    async fn make_request(&self, client: Client) -> Result<Response, BenchmarkError>;
     async fn check_response(
+        &self,
+        initial_check: bool,
         start: Instant,
         response: Response,
-    ) -> Result<BenchmarkResult, BenchmarkError> {
-        if response.status() != StatusCode::OK {
-            return Ok(BenchmarkResult::InvalidStatusCode(
-                response.status().as_u16(),
-            ));
-        }
-        let text = response.text().await?;
-        if text != "Hello, World!" {
-            return Ok(BenchmarkResult::InvalidResponse(format!(
-                "Expected \"Hello, World!\" found \"{text}\""
-            )));
-        }
-
-        Ok(BenchmarkResult::Ok(BenchmarkOkResult {
-            time: start.elapsed(),
-            iterations: 1,
-        }))
-    }
-
-    run_requests(iterations, make_request, check_response).await
+    ) -> Result<BenchmarkResult, BenchmarkError>;
 }
 
-async fn run_requests<FMakeRequest, RetMakeRequest, FCheckResponse, RetCheckResponse>(
+async fn run_requests(
     iterations: usize,
-    make_request: FMakeRequest,
-    check_response: FCheckResponse,
-) -> Result<BenchmarkResult, BenchmarkError>
-where
-    FMakeRequest: Fn(Client) -> RetMakeRequest + Send + Sync + Clone + 'static,
-    RetMakeRequest: Future<Output = Result<Response, BenchmarkError>> + Send,
-    FCheckResponse: Fn(Instant, Response) -> RetCheckResponse + Send + Sync + Clone + 'static,
-    RetCheckResponse: Future<Output = Result<BenchmarkResult, BenchmarkError>> + Send,
-{
+    benchmark: Arc<dyn Benchmark>,
+) -> Result<BenchmarkResult, BenchmarkError> {
     let client = Client::new();
 
-    let response = make_request(client.clone()).await?;
-    match check_response(Instant::now(), response).await? {
+    let response = benchmark.make_request(client.clone()).await?;
+    match benchmark
+        .check_response(true, Instant::now(), response)
+        .await?
+    {
         BenchmarkResult::Ok(_) => {}
         other => return Ok(other),
     }
@@ -194,13 +181,12 @@ where
 
     let futures = (0..iterations).map(|_| {
         let client = client.clone();
-        let make_request = make_request.clone();
-        let check_response = check_response.clone();
+        let benchmark = benchmark.clone();
         tokio::spawn(async move {
             let start = Instant::now();
-            let response = make_request(client).await?;
+            let response = benchmark.make_request(client).await?;
             let result: Result<BenchmarkResult, BenchmarkError> =
-                check_response(start, response).await;
+                benchmark.check_response(false, start, response).await;
             result
         })
     });

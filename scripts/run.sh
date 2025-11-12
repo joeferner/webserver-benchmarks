@@ -5,7 +5,7 @@ SCRIPT_PATH="$(dirname ${BASH_SOURCE[0]})"
 
 cd "${SCRIPT_PATH}/../benchmark-runner"
 
-docker compose run --build benchmark-runner
+docker compose run --remove-orphans --build benchmark-runner
 
 echo ""
 echo "Complete!"

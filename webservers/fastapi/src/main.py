@@ -1,5 +1,10 @@
 from fastapi import FastAPI
-from fastapi.responses import PlainTextResponse
+from fastapi.responses import PlainTextResponse, FileResponse
+import os
+import sys
+
+print(os.listdir("/"), file=sys.stderr)
+print(os.listdir("/assets/"), file=sys.stderr)
 
 app = FastAPI()
 
@@ -12,3 +17,8 @@ def get_health():
 @app.get("/benchmark/plain-text")
 def get_plain_text():
     return PlainTextResponse("Hello, World!")
+
+
+@app.get("/benchmark/download-binary")
+def get_download_binary():
+    return FileResponse("/assets/download-binary.png", media_type="image/png")
