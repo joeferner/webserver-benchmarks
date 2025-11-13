@@ -12,10 +12,13 @@ use log::info;
 use reqwest::{Client, Response};
 use serde::{Serialize, Serializer};
 use thiserror::Error;
-use tokio::time::Instant;
+use tokio::time::{Instant, sleep};
 
 use crate::{
-    benchmarks::{download_binary::benchmark_download_binary, plaintext::benchmark_plaintext},
+    benchmarks::{
+        download_binary::benchmark_download_binary,
+        matrix_multiplication::benchmark_matrix_multiplication, plaintext::benchmark_plaintext,
+    },
     docker::{DockerError, run_webserver, stop_webserver},
     http::{HttpError, http_wait_for_url},
     process_manager::{ProcessManager, ProcessManagerError},
@@ -61,6 +64,7 @@ enum BenchmarkResult {
     Ok(BenchmarkOkResult),
     InvalidStatusCode(u16),
     InvalidResponse(String),
+    UnhandledError(String),
 }
 
 #[derive(Serialize, Debug)]
@@ -71,12 +75,7 @@ struct BenchmarkOkResult {
     iterations: usize,
 }
 
-#[derive(Serialize, Debug)]
-#[serde(rename_all = "camelCase")]
-struct BenchmarkResults {
-    plaintext: BenchmarkResult,
-    download_binary: BenchmarkResult,
-}
+type BenchmarkResults = HashMap<String, BenchmarkResult>;
 
 #[derive(Serialize, Debug)]
 #[serde(rename_all = "camelCase", untagged)]
@@ -139,24 +138,49 @@ async fn run_benchmark(
         Duration::from_secs(10),
     )
     .await?;
+    sleep(Duration::from_secs(1)).await;
 
-    let plaintext = benchmark_plaintext(10000).await?;
-    let download_binary = benchmark_download_binary(1000).await?;
+    let mut results: HashMap<String, BenchmarkResult> = HashMap::new();
+    match benchmark_plaintext(10000).await {
+        Ok(result) => results.insert("plaintext".to_string(), result),
+        Err(err) => results.insert(
+            "plaintext".to_string(),
+            BenchmarkResult::UnhandledError(format!("failed: {err}")),
+        ),
+    };
+
+    match benchmark_download_binary(1000).await {
+        Ok(result) => results.insert("downloadBinary".to_string(), result),
+        Err(err) => results.insert(
+            "downloadBinary".to_string(),
+            BenchmarkResult::UnhandledError(format!("failed: {err}")),
+        ),
+    };
+
+    match benchmark_matrix_multiplication(100).await {
+        Ok(result) => results.insert("matrixMultiplication".to_string(), result),
+        Err(err) => results.insert(
+            "matrixMultiplication".to_string(),
+            BenchmarkResult::UnhandledError(format!("failed: {err}")),
+        ),
+    };
 
     stop_webserver(name)?;
     pm.kill(child)?;
-    Ok(BenchmarkResults {
-        plaintext,
-        download_binary,
-    })
+    sleep(Duration::from_secs(1)).await;
+    Ok(results)
 }
 
 #[async_trait]
 trait Benchmark: Send + Sync {
-    async fn make_request(&self, client: Client) -> Result<Response, BenchmarkError>;
+    async fn make_request(
+        &self,
+        client: Client,
+        iteration: usize,
+    ) -> Result<Response, BenchmarkError>;
     async fn check_response(
         &self,
-        initial_check: bool,
+        iteration: usize,
         start: Instant,
         response: Response,
     ) -> Result<BenchmarkResult, BenchmarkError>;
@@ -168,9 +192,9 @@ async fn run_requests(
 ) -> Result<BenchmarkResult, BenchmarkError> {
     let client = Client::new();
 
-    let response = benchmark.make_request(client.clone()).await?;
+    let response = benchmark.make_request(client.clone(), 0).await?;
     match benchmark
-        .check_response(true, Instant::now(), response)
+        .check_response(0, Instant::now(), response)
         .await?
     {
         BenchmarkResult::Ok(_) => {}
@@ -179,14 +203,14 @@ async fn run_requests(
 
     let start = Instant::now();
 
-    let futures = (0..iterations).map(|_| {
+    let futures = (0..iterations).map(|iteration| {
         let client = client.clone();
         let benchmark = benchmark.clone();
         tokio::spawn(async move {
             let start = Instant::now();
-            let response = benchmark.make_request(client).await?;
+            let response = benchmark.make_request(client, iteration).await?;
             let result: Result<BenchmarkResult, BenchmarkError> =
-                benchmark.check_response(false, start, response).await;
+                benchmark.check_response(iteration, start, response).await;
             result
         })
     });

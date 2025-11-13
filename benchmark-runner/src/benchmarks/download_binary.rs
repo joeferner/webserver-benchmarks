@@ -17,7 +17,11 @@ struct DownloadBinaryBenchmark {
 
 #[async_trait]
 impl Benchmark for DownloadBinaryBenchmark {
-    async fn make_request(&self, client: Client) -> Result<Response, BenchmarkError> {
+    async fn make_request(
+        &self,
+        client: Client,
+        _iteration: usize,
+    ) -> Result<Response, BenchmarkError> {
         let response = client
             .get("http://web:8000/benchmark/download-binary")
             .send()
@@ -27,7 +31,7 @@ impl Benchmark for DownloadBinaryBenchmark {
 
     async fn check_response(
         &self,
-        _initial_check: bool,
+        _iteration: usize,
         start: Instant,
         response: Response,
     ) -> Result<BenchmarkResult, BenchmarkError> {

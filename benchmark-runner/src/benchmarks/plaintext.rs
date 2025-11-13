@@ -11,7 +11,11 @@ struct PlaintextBenchmark {}
 
 #[async_trait]
 impl Benchmark for PlaintextBenchmark {
-    async fn make_request(&self, client: Client) -> Result<Response, BenchmarkError> {
+    async fn make_request(
+        &self,
+        client: Client,
+        _iteration: usize,
+    ) -> Result<Response, BenchmarkError> {
         let response = client
             .get("http://web:8000/benchmark/plain-text")
             .send()
@@ -21,7 +25,7 @@ impl Benchmark for PlaintextBenchmark {
 
     async fn check_response(
         &self,
-        _initial_check: bool,
+        _iteration: usize,
         start: Instant,
         response: Response,
     ) -> Result<BenchmarkResult, BenchmarkError> {
